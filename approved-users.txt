@@ -1,2 +1,1 @@
 # Format: USER_ID|EXPIRY_UNIX\n# Use 0 for no expiry; otherwise use a future Unix timestamp.\n
-30CAFC95C8B10345
