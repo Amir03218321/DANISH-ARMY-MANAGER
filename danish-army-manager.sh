@@ -23,7 +23,7 @@ SELECTED=""
 # ONLINE UPDATE SETTINGS
 # Set OWNER and REPO to the existing GitHub repository used for this tool.
 GITHUB_OWNER="Amir03218321"
-GITHUB_REPO="FREE-FIRE-PANEL"
+GITHUB_REPO="DANISH-ARMY-MANAGER"
 GITHUB_BRANCH="main"
 # Separate repository used ONLY for improvement suggestions (create it on GitHub).
 IMPROVEMENT_REPO="DANIX-IMPROVEMENTS"
