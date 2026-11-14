@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Replace this with the GitHub account that owns DANISH-ARMY-ROOT-SUITE.
 OWNER="Amir03218321"
-REPO="FREE-FIRE-PANEL"
+REPO="DANISH-ARMY-MANAGER"
 BRANCH="main"
 FILE="danish-army-manager.sh"
 DEST="${PREFIX:-/data/data/com.termux/files/usr}/bin/danish-army-manager"
