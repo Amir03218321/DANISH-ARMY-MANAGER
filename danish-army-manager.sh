@@ -30,7 +30,7 @@ IMPROVEMENT_REPO="DANIX-IMPROVEMENTS"
 IMPROVEMENT_BRANCH="main"
 # Set this to the deployed secure API proxy URL before publishing.
 ACCESS_REQUEST_API="https://sparkling-star-daab.hahatechnology251.workers.dev/"
-APP_VERSION="2.1.1"
+APP_VERSION="2.1.3"
 
 # DRIVER DOWNLOAD SETTINGS
 DRIVER_API="https://api.github.com/repos/Amir03218321/DANISH-DRIVERS/contents"
@@ -181,7 +181,8 @@ submit_access_request_once() {
     local approved_list=""
     [[ -n "${DANIX_USER_ID:-}" ]] || ensure_danix_user_id
 
-    if github_access_check; then
+    approved_list="$(curl -fsSL --max-time 10 -H 'Cache-Control: no-cache' "${ACCESS_LIST_URL}?check=$(date +%s)" 2>/dev/null || true)"
+    if printf '%s\n' "$approved_list" | tr -d '\r' | grep -Fxq "$DANIX_USER_ID"; then
         echo -e "${GREEN}YOUR USER ID IS ALREADY APPROVED.${RESET}"
         return 0
     fi
@@ -212,30 +213,18 @@ submit_access_request_once() {
 }
 
 github_access_check() {
-    local approved_list approved_id expiry now fetch_url
-    # Fetch the current TXT file on every check; do not use a saved approval result.
-    fetch_url="${ACCESS_LIST_URL}?_=$(date +%s%N)"
-    approved_list="$(curl -fsSL --retry 1 --connect-timeout 8 --max-time 15 \
-        -H 'Cache-Control: no-cache, no-store, max-age=0' \
-        -H 'Pragma: no-cache' "$fetch_url" 2>/dev/null)" || return 2
-
+    local approved_list approved_id expiry now
+    approved_list="$(curl -fsSL --max-time 12 -H 'Cache-Control: no-cache' "${ACCESS_LIST_URL}?check=$(date +%s)" 2>/dev/null)" || return 2
     now="$(date +%s)"
     while IFS='|' read -r approved_id expiry; do
-        # The complete ID must match the first column of approved-users.txt.
         approved_id="$(printf '%s' "$approved_id" | tr -d '\r' | sed 's/[[:space:]]//g')"
-        [[ -n "$approved_id" && "$approved_id" == "$DANIX_USER_ID" ]] || continue
-
-        # A plain ID has no expiry; ID|UNIX_TIMESTAMP supports timed approval.
+        [[ "$approved_id" == "$DANIX_USER_ID" ]] || continue
         expiry="$(printf '%s' "${expiry:-0}" | tr -d '\r' | sed 's/[[:space:]]//g')"
         [[ -z "$expiry" ]] && expiry=0
         [[ "$expiry" =~ ^[0-9]+$ ]] || return 1
-        if (( expiry == 0 || expiry > now )); then
-            return 0
-        fi
+        if (( expiry == 0 || expiry > now )); then return 0; fi
         return 1
     done <<< "$approved_list"
-
-    # ID absent from the TXT file (or expired): deny access.
     return 1
 }
 
@@ -314,6 +303,28 @@ url_encode() {
 }
 
 send_improvement_request() {
+    local improvement_check_result
+
+    # Re-check the current GitHub approval list every time this option is opened.
+    # Improvement requests are available only while this User ID is approved.
+    if github_access_check; then
+        :
+    else
+        improvement_check_result=$?
+        banner
+        echo -e "${CYAN}          DANIX IMPROVEMENT REQUEST${RESET}"
+        echo
+        if [[ "$improvement_check_result" -eq 2 ]]; then
+            echo -e "${RED}GITHUB STATUS COULD NOT BE VERIFIED.${RESET}"
+            echo "Please check your internet connection and try again."
+        else
+            echo -e "${YELLOW}IMPROVEMENT REQUEST IS NOT AVAILABLE.${RESET}"
+            echo "Your User ID is not currently approved in approved-users.txt."
+        fi
+        pause
+        return
+    fi
+
     banner
     echo -e "${CYAN}          DANIX IMPROVEMENT REQUEST${RESET}"
     echo
