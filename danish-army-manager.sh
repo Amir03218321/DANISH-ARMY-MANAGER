@@ -30,7 +30,7 @@ IMPROVEMENT_REPO="DANIX-IMPROVEMENTS"
 IMPROVEMENT_BRANCH="main"
 # Set this to the deployed secure API proxy URL before publishing.
 ACCESS_REQUEST_API="https://sparkling-star-daab.hahatechnology251.workers.dev/"
-APP_VERSION="2.1.4"
+APP_VERSION="2.4.0"
 
 # DRIVER DOWNLOAD SETTINGS
 DRIVER_API="https://api.github.com/repos/Amir03218321/DANISH-DRIVERS/contents"
@@ -153,6 +153,7 @@ ACCESS_LIST_URL="https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO
 ACCESS_REQUEST_URL="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/issues/new"
 DANIX_USER_DIR="${HOME}/.danix"
 DANIX_USER_ID_FILE="${DANIX_USER_DIR}/user-id"
+ACCESS_REQUEST_PENDING_FILE="${DANIX_USER_DIR}/access-request-pending"
 
 open_github_url() {
     local url="$1"
@@ -167,88 +168,95 @@ open_github_url() {
 
 ensure_danix_user_id() {
     mkdir -p "$DANIX_USER_DIR"
-    local stored_id generated_id
-    stored_id=""
-    if [[ -s "$DANIX_USER_ID_FILE" ]]; then
-        stored_id="$(tr -d '\r\n[:space:]' < "$DANIX_USER_ID_FILE")"
-    fi
-    # A valid DANIX ID is exactly 16 hexadecimal characters. Repair a corrupt
-    # or empty local ID file so an empty value can never match a blank list line.
-    if [[ "$stored_id" =~ ^[A-Fa-f0-9]{16}$ ]]; then
-        DANIX_USER_ID="${stored_id^^}"
-    else
+    if [[ ! -s "$DANIX_USER_ID_FILE" ]]; then
+        local generated_id
         generated_id="$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n' | tr 'a-f' 'A-F')"
-        [[ "$generated_id" =~ ^[A-F0-9]{16}$ ]] || { echo "Could not create a valid User ID."; exit 1; }
-        printf '%s\n' "$generated_id" > "$DANIX_USER_ID_FILE" || { echo "Could not save User ID."; exit 1; }
+        [[ -n "$generated_id" ]] || { echo "Could not create User ID."; exit 1; }
+        printf '%s\n' "$generated_id" > "$DANIX_USER_ID_FILE"
         chmod 600 "$DANIX_USER_ID_FILE"
-        DANIX_USER_ID="$generated_id"
     fi
+    DANIX_USER_ID="$(tr -d '\r\n' < "$DANIX_USER_ID_FILE")"
 }
 
 submit_access_request_once() {
-    local approved_list=""
+    local approved_list="" response="" http_code="" curl_error="" payload=""
     [[ -n "${DANIX_USER_ID:-}" ]] || ensure_danix_user_id
 
-    approved_list="$(curl -fsSL --max-time 10 -H 'Cache-Control: no-cache' "${ACCESS_LIST_URL}?check=$(date +%s)" 2>/dev/null || true)"
-    if printf '%s\n' "$approved_list" | tr -d '\r' | grep -Fxq "$DANIX_USER_ID"; then
+    if ! [[ "$DANIX_USER_ID" =~ ^[A-F0-9]{16}$ ]]; then
+        echo -e "${RED}INVALID OR EMPTY USER ID. REQUEST CANCELLED.${RESET}"
+        return 1
+    fi
+
+    if ! command -v curl >/dev/null 2>&1; then
+        printf '%s|%s\n' "$DANIX_USER_ID" "$APP_VERSION" > "$ACCESS_REQUEST_PENDING_FILE"
+        chmod 600 "$ACCESS_REQUEST_PENDING_FILE"
+        echo -e "${YELLOW}CURL IS MISSING. ACCESS REQUEST SAVED LOCALLY.${RESET}"
+        echo "Install curl, then reopen the tool to retry."
+        return 0
+    fi
+
+    # If GitHub confirms this exact ID is already approved, no request is needed.
+    approved_list="$(curl -fsSL --retry 2 --connect-timeout 8 --max-time 15 \
+        -H 'Cache-Control: no-cache' "${ACCESS_LIST_URL}?check=$(date +%s)" 2>/dev/null || true)"
+    if printf '%s\n' "$approved_list" | tr -d '\r' | awk -F'|' -v id="$DANIX_USER_ID" \
+        '$1 == id { found=1 } END { exit !found }'; then
+        rm -f "$ACCESS_REQUEST_PENDING_FILE"
         echo -e "${GREEN}YOUR USER ID IS ALREADY APPROVED.${RESET}"
         return 0
     fi
-    if [[ "$ACCESS_REQUEST_API" == *"YOUR-WORKER-NAME"* ]]; then
-        echo -e "${YELLOW}ACCESS REQUEST API IS NOT CONFIGURED YET.${RESET}"
-        echo "The secure API proxy URL must be set by the owner."
+
+    if [[ "$ACCESS_REQUEST_API" == *"YOUR-WORKER-NAME"* || -z "$ACCESS_REQUEST_API" ]]; then
+        echo -e "${YELLOW}ACCESS REQUEST API IS NOT CONFIGURED.${RESET}"
         return 1
     fi
-    if ! command -v curl >/dev/null 2>&1; then
-        echo -e "${RED}CURL IS REQUIRED. Install: pkg install curl -y${RESET}"
-        return 1
-    fi
-    local response
-    response="$(curl -fsSL --max-time 20 -X POST "$ACCESS_REQUEST_API" \
-        --data-urlencode "user_id=${DANIX_USER_ID}" \
-        --data-urlencode "app_version=${APP_VERSION}" 2>/dev/null)" || {
-        echo -e "${RED}COULD NOT SEND ACCESS REQUEST. CHECK INTERNET/API.${RESET}"
-        return 1
-    }
-    if printf '%s' "$response" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
-        echo -e "${GREEN}ACCESS REQUEST SENT TO YOUR GITHUB REPOSITORY.${RESET}"
+
+    # Keep a local pending record until the Worker explicitly confirms success.
+    printf '%s|%s\n' "$DANIX_USER_ID" "$APP_VERSION" > "$ACCESS_REQUEST_PENDING_FILE"
+    chmod 600 "$ACCESS_REQUEST_PENDING_FILE"
+
+    # Worker integration uses JSON (the API's expected userId/appVersion payload).
+    payload="$(printf '{"userId":"%s","appVersion":"%s"}' "$DANIX_USER_ID" "$APP_VERSION")"
+    response="$(curl -sS --connect-timeout 10 --max-time 25 \
+        -X POST "$ACCESS_REQUEST_API" \
+        -H 'Content-Type: application/json' \
+        -H 'Accept: application/json' \
+        --data "$payload" \
+        -w $'\nDANIX_HTTP_STATUS:%{http_code}' 2>&1)" || curl_error="$response"
+
+    http_code="$(printf '%s\n' "$response" | sed -n 's/^DANIX_HTTP_STATUS://p' | tail -n 1)"
+    response="$(printf '%s\n' "$response" | sed '/^DANIX_HTTP_STATUS:/d')"
+    if [[ -z "$curl_error" && "$http_code" =~ ^2[0-9][0-9]$ ]] && \
+       printf '%s' "$response" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
+        rm -f "$ACCESS_REQUEST_PENDING_FILE"
+        echo -e "${GREEN}ACCESS REQUEST SENT SUCCESSFULLY.${RESET}"
         echo -e "${WHITE}USER ID: ${DANIX_USER_ID}${RESET}"
-    else
-        echo -e "${RED}GITHUB DID NOT ACCEPT THE REQUEST.${RESET}"
-        echo "$response"
-        return 1
+        return 0
     fi
+
+    echo -e "${YELLOW}REQUEST IS SAVED AS PENDING; IT WAS NOT MARKED AS SENT.${RESET}"
+    echo -e "${WHITE}USER ID: ${DANIX_USER_ID}${RESET}"
+    [[ -n "$http_code" ]] && echo "HTTP STATUS: $http_code"
+    [[ -n "$curl_error" ]] && echo "Connection detail: $curl_error"
+    [[ -n "$response" ]] && echo "API response: $response"
+    echo "It will retry on the next launch or when you choose Check Approval Again."
+    return 0
 }
 
 github_access_check() {
-    local approved_list approved_id expiry extra now
-
-    # Fail closed if the local ID is missing, malformed, or not normalized.
+    local approved_list approved_id expiry now
     [[ "${DANIX_USER_ID:-}" =~ ^[A-F0-9]{16}$ ]] || return 1
-    command -v curl >/dev/null 2>&1 || return 2
-
-    approved_list="$(curl -fsSL --max-time 12 -H 'Cache-Control: no-cache' "${ACCESS_LIST_URL}?check=$(date +%s)" 2>/dev/null)" || return 2
+    approved_list="$(curl -fsSL --retry 2 --connect-timeout 8 --max-time 15 \
+        -H 'Cache-Control: no-cache' "${ACCESS_LIST_URL}?check=$(date +%s)" 2>/dev/null)" || return 2
     now="$(date +%s)"
-
-    while IFS='|' read -r approved_id expiry extra; do
+    while IFS='|' read -r approved_id expiry; do
         approved_id="$(printf '%s' "$approved_id" | tr -d '\r' | sed 's/[[:space:]]//g')"
-        # Ignore blank lines and comments; neither can ever approve a user.
-        [[ -n "$approved_id" ]] || continue
-        [[ "$approved_id" == \#* ]] && continue
-        # Only exact 16-character hexadecimal IDs are valid entries.
-        [[ "$approved_id" =~ ^[A-Fa-f0-9]{16}$ ]] || continue
-        approved_id="${approved_id^^}"
-        [[ "$approved_id" == "$DANIX_USER_ID" ]] || continue
-
-        # A matching ID may be followed by one optional Unix expiry timestamp.
-        [[ -z "${extra:-}" ]] || return 1
+        [[ -n "$approved_id" && "$approved_id" == "$DANIX_USER_ID" ]] || continue
         expiry="$(printf '%s' "${expiry:-0}" | tr -d '\r' | sed 's/[[:space:]]//g')"
         [[ -z "$expiry" ]] && expiry=0
         [[ "$expiry" =~ ^[0-9]+$ ]] || return 1
         if (( expiry == 0 || expiry > now )); then return 0; fi
         return 1
     done <<< "$approved_list"
-
     return 1
 }
 
@@ -260,6 +268,12 @@ github_access_gate() {
     fi
 
     ensure_danix_user_id
+
+    if [[ -s "$ACCESS_REQUEST_PENDING_FILE" ]]; then
+        echo -e "${CYAN}RETRYING YOUR SAVED ACCESS REQUEST...${RESET}"
+        submit_access_request_once
+        sleep 1
+    fi
 
     while true; do
         banner
@@ -294,6 +308,11 @@ github_access_gate() {
                 ;;
             2)
                 echo "Checking approval..."
+                if [[ -s "$ACCESS_REQUEST_PENDING_FILE" ]]; then
+                    echo -e "${CYAN}RETRYING YOUR SAVED ACCESS REQUEST...${RESET}"
+                    submit_access_request_once
+                    pause
+                fi
                 ;;
             3)
                 echo "Access request closed."
@@ -327,28 +346,6 @@ url_encode() {
 }
 
 send_improvement_request() {
-    local improvement_check_result
-
-    # Re-check the current GitHub approval list every time this option is opened.
-    # Improvement requests are available only while this User ID is approved.
-    if github_access_check; then
-        :
-    else
-        improvement_check_result=$?
-        banner
-        echo -e "${CYAN}          DANIX IMPROVEMENT REQUEST${RESET}"
-        echo
-        if [[ "$improvement_check_result" -eq 2 ]]; then
-            echo -e "${RED}GITHUB STATUS COULD NOT BE VERIFIED.${RESET}"
-            echo "Please check your internet connection and try again."
-        else
-            echo -e "${YELLOW}IMPROVEMENT REQUEST IS NOT AVAILABLE.${RESET}"
-            echo "Your User ID is not currently approved in approved-users.txt."
-        fi
-        pause
-        return
-    fi
-
     banner
     echo -e "${CYAN}          DANIX IMPROVEMENT REQUEST${RESET}"
     echo
@@ -780,6 +777,23 @@ check_for_updates() {
     if install -m 700 "$script_tmp" "$dest"; then
         rm -f "$backup"
         echo -e "${GREEN}UPDATE INSTALLED SUCCESSFULLY.${RESET}"
+        # Clear only after the new script is installed successfully.
+        # Preserve the normal exit-time staged-panel cleanup behavior.
+        if [[ "$PANEL_PRIVATE_DIR" == "$HOME/.danish-army-panels" ]]; then
+            rm -rf -- "$PANEL_PRIVATE_DIR"
+            if [[ ! -e "$PANEL_PRIVATE_DIR" ]]; then
+                echo -e "${GREEN}TERMUX PRIVATE PANEL DOWNLOADS CLEARED.${RESET}"
+            else
+                echo -e "${YELLOW}COULD NOT CLEAR PRIVATE PANEL DOWNLOADS.${RESET}"
+            fi
+        fi
+        # Remove every entry inside /data/local/tmp, but keep/recreate the directory
+        # because the manager and Android tools expect this path to exist.
+        if su -c "if [ -d '$TMP_DIR' ]; then find '$TMP_DIR' -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; else mkdir -p '$TMP_DIR'; fi"; then
+            echo -e "${GREEN}ALL CONTENTS INSIDE $TMP_DIR CLEARED AFTER UPDATE.${RESET}"
+        else
+            echo -e "${RED}TMP CLEANUP FAILED. CHECK ROOT PERMISSION.${RESET}"
+        fi
         echo -e "${CYAN}CLOSE AND REOPEN THE TOOL TO USE VERSION $remote_version.${RESET}"
     else
         mv -f "$backup" "$dest"
