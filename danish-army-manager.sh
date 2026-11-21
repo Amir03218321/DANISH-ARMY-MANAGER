@@ -30,7 +30,7 @@ IMPROVEMENT_REPO="DANIX-IMPROVEMENTS"
 IMPROVEMENT_BRANCH="main"
 # Set this to the deployed secure API proxy URL before publishing.
 ACCESS_REQUEST_API="https://sparkling-star-daab.hahatechnology251.workers.dev/"
-APP_VERSION="2.5.3"
+APP_VERSION="2.5.4"
 
 # DRIVER DOWNLOAD SETTINGS
 DRIVER_API="https://api.github.com/repos/Amir03218321/DANISH-DRIVERS/contents"
