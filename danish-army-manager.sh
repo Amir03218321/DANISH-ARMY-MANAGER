@@ -30,7 +30,7 @@ IMPROVEMENT_REPO="DANIX-IMPROVEMENTS"
 IMPROVEMENT_BRANCH="main"
 # Set this to the deployed secure API proxy URL before publishing.
 ACCESS_REQUEST_API="https://sparkling-star-daab.hahatechnology251.workers.dev/"
-APP_VERSION="2.8.1"
+APP_VERSION="2.8.2"
 
 # MUSIC / VOICE SYSTEM (only this new system is added; existing features stay unchanged)
 # Replace the placeholder with the ZIP download URL of your DANISH-ARMY-MUSIC repository.
