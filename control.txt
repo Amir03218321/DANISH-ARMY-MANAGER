@@ -1,3 +1,3 @@
-MAINTENANCE=ON
+MAINTENANCE=OFF
 MIN_VERSION=2.8.4
 MESSAGE=𝘿𝘼𝙉𝙄𝙎𝙃 𝘼𝙍𝙈𝙔 𝙈𝘼𝙉𝘼𝙂𝙀𝙍 𝘐𝙎 𝘾𝙐𝙍𝙍𝙀𝙉𝙏𝙇𝙔 𝙐𝙉𝘿𝙀𝙍 𝙈𝘼𝙄𝙉𝙏𝙀𝙉𝘼𝙉𝘾𝙀 𝘾𝙊𝙉𝙏𝘼𝘾𝙏 𝙏𝙃𝙀 𝙊𝙒𝙉𝙀𝙍 𝙁𝙊𝙍 𝙈𝙊𝙍𝙀 𝙄𝙉𝙁𝙊!
